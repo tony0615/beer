@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV 文件解析器 - 多列分类统计</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .file-input {
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+            position: sticky;
+            top: 0;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .data-container {
+            max-height: 500px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .stats-controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #eef;
+            border-radius: 5px;
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            font-weight: bold;
+        }
+        select, button {
+            padding: 5px 10px;
+            margin-right: 10px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 15px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background-color: #ddd;
+            cursor: pointer;
+            margin-right: 5px;
+            border-radius: 5px 5px 0 0;
+        }
+        .tab.active {
+            background-color: #f9f9f9;
+            font-weight: bold;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .selected-columns {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 5px;
+        }
+        .selected-column {
+            background-color: #e0e0e0;
+            padding: 3px 8px;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+        }
+        .remove-column {
+            margin-left: 5px;
+            cursor: pointer;
+            color: #666;
+        }
+        .stats-table {
+            margin-top: 20px;
+        }
+        .group-level-0 {
+            font-weight: bold;
+            background-color: #e6f3ff !important;
+        }
+        .group-level-1 {
+            background-color: #f0f8ff !important;
+        }
+        .group-level-2 {
+            background-color: #f9fcff !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV 文件解析器 - 多列分类统计</h1>
+        
+        <div class="file-input">
+            <input type="file" id="csvFileInput" accept=".csv" />
+            <input type="number" id="headline" min="0" step="1" placeholder="表头的行数" />
+            <button id="parseBtn">解析 CSV</button>
+        </div>
+        
+        <div id="errorMsg" class="error"></div>
+        
+        <div class="stats-controls" id="statsControls" style="display: none;">
+            <h3>数据统计</h3>
+            <div class="control-group">
+                <label for="availableColumns">可选列:</label>
+                <select id="availableColumns"></select>
+                <button id="addGroupByColumn">添加分类列</button>
+                <button id="removeGroupByColumn">移除分类列</button>
+            </div>
+            
+            <div class="control-group">
+                <label>分类列:</label>
+                <div class="selected-columns" id="groupByColumns"></div>
+            </div>
+            
+            <div class="control-group">
+                <label for="statsColumn">统计列:</label>
+                <select id="statsColumn"></select>
+                <button id="calculateStats">计算统计</button>
+            </div>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" data-tab="rawData">原始数据</div>
+            <div class="tab" data-tab="statsResults">统计结果</div>
+        </div>
+        
+        <div class="tab-content active" id="rawData">
+            <div class="data-container">
+                <table id="csvTable">
+                    <thead id="tableHeader"></thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="tab-content" id="statsResults">
+            <div class="data-container">
+                <div id="statsInfo"></div>
+                <table id="statsTable" class="stats-table">
+                    <thead id="statsHeader"></thead>
+                    <tbody id="statsBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('csvFileInput');
+            const parseBtn = document.getElementById('parseBtn');
+            const tableHeader = document.getElementById('tableHeader');
+            const tableBody = document.getElementById('tableBody');
+            const errorMsg = document.getElementById('errorMsg');
+            const statsControls = document.getElementById('statsControls');
+            const availableColumns = document.getElementById('availableColumns');
+            const addGroupByColumn = document.getElementById('addGroupByColumn');
+            const removeGroupByColumn = document.getElementById('removeGroupByColumn');
+            const groupByColumns = document.getElementById('groupByColumns');
+            const statsColumn = document.getElementById('statsColumn');
+            const calculateStats = document.getElementById('calculateStats');
+            const statsHeader = document.getElementById('statsHeader');
+            const statsBody = document.getElementById('statsBody');
+            const statsInfo = document.getElementById('statsInfo');
+            const tabs = document.querySelectorAll('.tab');
+            const tabContents = document.querySelectorAll('.tab-content');
+            const headline = document.getElementById('headline');
+            let csvData = null;
+            let csvHeaders = [];
+            let selectedGroupByColumns = [];
+            
+            // 初始化标签页
+            tabs.forEach(tab => {
+                tab.addEventListener('click', function() {
+                    const tabId = this.getAttribute('data-tab');
+                    
+                    tabs.forEach(t => t.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.remove('active'));
+                    
+                    this.classList.add('active');
+                    document.getElementById(tabId).classList.add('active');
+                });
+            });
+            
+            parseBtn.addEventListener('click', parseCSV);
+            addGroupByColumn.addEventListener('click', addGroupByColumnHandler);
+            removeGroupByColumn.addEventListener('click', removeGroupByColumnHandler);
+            calculateStats.addEventListener('click', calculateStatistics);
+            
+            function parseCSV() {
+                // 重置错误信息和表格
+                errorMsg.textContent = '';
+                tableHeader.innerHTML = '';
+                tableBody.innerHTML = '';
+                statsControls.style.display = 'none';
+                statsHeader.innerHTML = '';
+                statsBody.innerHTML = '';
+                statsInfo.innerHTML = '';
+                groupByColumns.innerHTML = '';
+                selectedGroupByColumns = [];
+                
+                const file = fileInput.files[0];
+                if (!file) {
+                    errorMsg.textContent = '请先选择CSV文件';
+                    return;
+                }
+                
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    try {
+                        const csvText = e.target.result;
+                        const result = parseCSVText(csvText);
+                        
+                        if (result.error) {
+                            errorMsg.textContent = result.error;
+                            return;
+                        }
+                        
+                        csvData = result.data;
+                        csvHeaders = result.headers;
+                        
+                        displayCSVData(result.headers, result.data);
+                        setupStatsControls(result.headers);
+                    } catch (err) {
+                        errorMsg.textContent = '解析CSV文件时出错: ' + err.message;
+                    }
+                };
+                
+                reader.onerror = function() {
+                    errorMsg.textContent = '读取文件时出错';
+                };
+                
+                reader.readAsText(file, 'UTF-8');
+            }
+            
+            function parseCSVText(csvText) {
+                // 处理不同换行符 (Windows: \r\n, Unix: \n)
+                const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
+                
+                if (lines.length === 0) {
+                    return { error: 'CSV文件为空' };
+                }
+                
+                const lit= Number(headline.value) || 0;
+                // 解析表头
+                const headers = parseCSVLine(lines[lit]);
+                
+                // 解析数据行
+                const data = [];
+                for (let i = 1+lit; i < lines.length; i++) {
+                    const values = parseCSVLine(lines[i]);
+                    const row = {};
+                    
+                    // 确保每列都有对应的表头
+                    for (let j = 0; j < headers.length; j++) {
+                        const header = headers[j] || `列${j+1}`;
+                        row[header] = j < values.length ? values[j] : '';
+                    }
+                    
+                    data.push(row);
+                }
+                
+                return { headers, data };
+            }
+            
+            function parseCSVLine(line) {
+                // 处理包含逗号的引用字段
+                const pattern = /(?:,|^)("(?:(?:"")*[^"]*)*"|[^",\r\n]*|(?:\r\n|\n)?)/g;
+                let matches;
+                const values = [];
+                
+                while ((matches = pattern.exec(line)) !== null) {
+                    let value = matches[1] || '';
+                    
+                    // 处理双引号
+                    if (value.startsWith('"') && value.endsWith('"')) {
+                        value = value.substring(1, value.length - 1);
+                        value = value.replace(/""/g, '"');
+                    }
+                    
+                    values.push(value.trim());
+                }
+                
+                return values;
+            }
+            
+            function displayCSVData(headers, data) {
+                // 创建表头
+                const headerRow = document.createElement('tr');
+                headers.forEach(header => {
+                    const th = document.createElement('th');
+                    th.textContent = header;
+                    headerRow.appendChild(th);
+                });
+                tableHeader.appendChild(headerRow);
+                
+                // 创建数据行
+                data.forEach(row => {
+                    const tr = document.createElement('tr');
+                    headers.forEach(header => {
+                        const td = document.createElement('td');
+                        td.textContent = row[header] || '';
+                        tr.appendChild(td);
+                    });
+                    tableBody.appendChild(tr);
+                });
+            }
+            
+            function setupStatsControls(headers) {
+                // 清空并填充下拉菜单
+                availableColumns.innerHTML = '';
+                statsColumn.innerHTML = '';
+                
+                headers.forEach(header => {
+                    const option1 = document.createElement('option');
+                    option1.value = header;
+                    option1.textContent = header;
+                    availableColumns.appendChild(option1);
+                    
+                    const option2 = document.createElement('option');
+                    option2.value = header;
+                    option2.textContent = header;
+                    statsColumn.appendChild(option2);
+                });
+                
+                statsControls.style.display = 'block';
+            }
+            
+            function addGroupByColumnHandler() {
+                const selectedColumn = availableColumns.value;
+                
+                if (!selectedColumn) {
+                    errorMsg.textContent = '请选择要添加的列';
+                    return;
+                }
+                
+                if (selectedGroupByColumns.includes(selectedColumn)) {
+                    errorMsg.textContent = '该列已添加为分类列';
+                    return;
+                }
+                
+                selectedGroupByColumns.push(selectedColumn);
+                updateGroupByColumnsDisplay();
+            }
+            
+            function removeGroupByColumnHandler() {
+                const selectedColumn = availableColumns.value;
+                
+                if (!selectedColumn) {
+                    errorMsg.textContent = '请选择要移除的列';
+                    return;
+                }
+                
+                const index = selectedGroupByColumns.indexOf(selectedColumn);
+                if (index === -1) {
+                    errorMsg.textContent = '该列不是分类列';
+                    return;
+                }
+                
+                selectedGroupByColumns.splice(index, 1);
+                updateGroupByColumnsDisplay();
+            }
+            
+            function updateGroupByColumnsDisplay() {
+                groupByColumns.innerHTML = '';
+                
+                selectedGroupByColumns.forEach((column, index) => {
+                    const columnElement = document.createElement('div');
+                    columnElement.className = 'selected-column';
+                    columnElement.innerHTML = `
+                        ${column}
+                        <span class="remove-column" data-index="${index}">×</span>
+                    `;
+                    groupByColumns.appendChild(columnElement);
+                });
+                
+                // 添加移除按钮事件
+                document.querySelectorAll('.remove-column').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const index = parseInt(this.getAttribute('data-index'));
+                        selectedGroupByColumns.splice(index, 1);
+                        updateGroupByColumnsDisplay();
+                    });
+                });
+            }
+            
+            function calculateStatistics() {
+                const statsCol = statsColumn.value;
+                
+                if (selectedGroupByColumns.length === 0) {
+                    errorMsg.textContent = '请至少选择一个分类列';
+                    return;
+                }
+                
+                if (!statsCol) {
+                    errorMsg.textContent = '请选择统计列';
+                    return;
+                }
+                
+                // 执行分组统计
+                const stats = {};
+                
+                csvData.forEach(row => {
+                    // 构建分组键 - 组合所有分类列的值
+                    const groupKey = selectedGroupByColumns.map(col => row[col] || '(空值)').join('|');
+                    const statValue = parseFloat(row[statsCol]) || 0;
+                    
+                    if (!stats[groupKey]) {
+                        stats[groupKey] = {
+                            groupValues: selectedGroupByColumns.map(col => row[col] || '(空值)'),
+                            count: 0,
+                            sum: 0,
+                            min: Infinity,
+                            max: -Infinity,
+                            values: []
+                        };
+                    }
+                    
+                    stats[groupKey].count++;
+                    stats[groupKey].sum += statValue;
+                    stats[groupKey].min = Math.min(stats[groupKey].min, statValue);
+                    stats[groupKey].max = Math.max(stats[groupKey].max, statValue);
+                    stats[groupKey].values.push(statValue);
+                });
+                
+                // 显示统计结果
+                displayStatistics(stats);
+                
+                // 切换到统计结果标签页
+                document.querySelector('.tab[data-tab="statsResults"]').click();
+            }
+            
+            function displayStatistics(stats) {
+                // 清空表格和信息
+                statsHeader.innerHTML = '';
+                statsBody.innerHTML = '';
+                statsInfo.innerHTML = '';
+                
+                // 显示统计信息
+                statsInfo.innerHTML = `
+                    <h3>统计信息</h3>
+                    <p><strong>分类列:</strong> ${selectedGroupByColumns.join(', ')}</p>
+                    <p><strong>统计列:</strong> ${statsColumn.value}</p>
+                    <p><strong>总分组数:</strong> ${Object.keys(stats).length}</p>
+                `;
+                
+                // 创建表头
+                const headerRow = document.createElement('tr');
+                
+                // 添加分类列标题
+                selectedGroupByColumns.forEach((column, index) => {
+                    const th = document.createElement('th');
+                    th.textContent = column;
+                    headerRow.appendChild(th);
+                });
+                
+                // 添加统计列标题
+                const statHeaders = [
+                    '计数',
+                    '总和',
+                    '平均值',
+                    '最小值',
+                    '最大值'
+                ];
+                
+                statHeaders.forEach(header => {
+                    const th = document.createElement('th');
+                    th.textContent = header;
+                    headerRow.appendChild(th);
+                });
+                
+                statsHeader.appendChild(headerRow);
+                
+                // 创建数据行
+                // 先按分组值排序
+                const sortedStats = Object.entries(stats).sort((a, b) => {
+                    for (let i = 0; i < selectedGroupByColumns.length; i++) {
+                        if (a[1].groupValues[i] < b[1].groupValues[i]) return -1;
+                        if (a[1].groupValues[i] > b[1].groupValues[i]) return 1;
+                    }
+                    return 0;
+                });
+                
+                let lastGroupValues = [];
+                
+                sortedStats.forEach(([key, groupStats]) => {
+                    const tr = document.createElement('tr');
+                    
+                    // 确定分组级别 (用于缩进显示)
+                    let commonLevel = 0;
+                    while (commonLevel < selectedGroupByColumns.length && 
+                           commonLevel < lastGroupValues.length &&
+                           groupStats.groupValues[commonLevel] === lastGroupValues[commonLevel]) {
+                        commonLevel++;
+                    }
+                    
+                    // 添加分类列值
+                    selectedGroupByColumns.forEach((col, index) => {
+                        const td = document.createElement('td');
+                        if (index >= commonLevel) {
+                            td.textContent = groupStats.groupValues[index];
+                        }
+                        td.className = `group-level-${index}`;
+                        tr.appendChild(td);
+                    });
+                    
+                    // 添加统计值
+                    const tdCount = document.createElement('td');
+                    tdCount.textContent = groupStats.count;
+                    tr.appendChild(tdCount);
+                    
+                    const tdSum = document.createElement('td');
+                    tdSum.textContent = groupStats.sum.toFixed(2);
+                    tr.appendChild(tdSum);
+                    
+                    const tdAvg = document.createElement('td');
+                    tdAvg.textContent = (groupStats.sum / groupStats.count).toFixed(2);
+                    tr.appendChild(tdAvg);
+                    
+                    const tdMin = document.createElement('td');
+                    tdMin.textContent = groupStats.min.toFixed(2);
+                    tr.appendChild(tdMin);
+                    
+                    const tdMax = document.createElement('td');
+                    tdMax.textContent = groupStats.max.toFixed(2);
+                    tr.appendChild(tdMax);
+                    
+                    statsBody.appendChild(tr);
+                    
+                    // 更新最后的分组值
+                    lastGroupValues = groupStats.groupValues;
+                });
+            }
+        });
+    </script>
+</body>
+</html>
